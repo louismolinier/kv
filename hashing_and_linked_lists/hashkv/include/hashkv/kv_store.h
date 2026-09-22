@@ -17,12 +17,17 @@ const char *StatusName(Status status);
 struct Options {
   std::string path;
   std::size_t bucket_count = 65536;
+  // 0 désactive le cache de valeurs pour Scan ; sinon puissance de deux
+  // jusqu'à 32768 emplacements (4 Kio par valeur, soit au plus ~128 Mio
+  // de valeurs en cache, plus les métadonnées).
+  std::size_t scan_cache_slots = 0;
   bool truncate = false;
 };
 
 struct Stats {
   std::uint64_t records = 0;
   std::uint64_t file_bytes = 0;
+  std::uint64_t wal_bytes = 0;
   std::uint64_t free_regions = 0;
   std::uint64_t free_bytes = 0;
   std::uint64_t reused_regions = 0;
@@ -33,7 +38,11 @@ struct Stats {
   std::uint64_t write_ns = 0;
   std::uint64_t find_ns = 0;
   std::uint64_t scan_ns = 0;
+  std::uint64_t scan_cache_hits = 0;
+  std::uint64_t scan_cache_misses = 0;
   std::uint64_t lock_wait_ns = 0;
+  std::uint64_t wal_sync_calls = 0;
+  std::uint64_t wal_sync_ns = 0;
 };
 
 class Store {
@@ -55,6 +64,7 @@ class Store {
               std::string *error = nullptr);
 
   bool Flush(std::string *error = nullptr);
+  bool Checkpoint(std::string *error = nullptr);
   Stats GetStats();
   const std::string &path() const;
 

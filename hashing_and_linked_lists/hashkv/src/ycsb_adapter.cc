@@ -1,6 +1,8 @@
 #include "hashkv/kv_store.h"
 
+#include <array>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -70,8 +72,11 @@ class HashKVDB : public DB {
     try {
       options.bucket_count = static_cast<std::size_t>(std::stoull(
           props_->GetProperty("hashkv.buckets", "65536")));
+      options.scan_cache_slots = static_cast<std::size_t>(std::stoull(
+          props_->GetProperty("hashkv.scan_cache_slots", "0")));
     } catch (const std::exception &) {
-      throw utils::Exception("hashkv.buckets must be an integer");
+      throw utils::Exception(
+          "hashkv.buckets and hashkv.scan_cache_slots must be integers");
     }
 
     std::string error;
@@ -93,6 +98,7 @@ class HashKVDB : public DB {
       const hashkv::Stats stats = store_->GetStats();
       std::cout << "HashKV records: " << stats.records << '\n'
                 << "HashKV file bytes: " << stats.file_bytes << '\n'
+                << "HashKV WAL bytes: " << stats.wal_bytes << '\n'
                 << "HashKV free regions: " << stats.free_regions << '\n'
                 << "HashKV free bytes: " << stats.free_bytes << '\n'
                 << "HashKV reused regions: " << stats.reused_regions
@@ -104,7 +110,15 @@ class HashKVDB : public DB {
                 << "HashKV profile write ms: " << stats.write_ns / 1e6 << '\n'
                 << "HashKV profile find ms: " << stats.find_ns / 1e6 << '\n'
                 << "HashKV profile scan ms: " << stats.scan_ns / 1e6 << '\n'
+                << "HashKV profile scan cache hits: "
+                << stats.scan_cache_hits << '\n'
+                << "HashKV profile scan cache misses: "
+                << stats.scan_cache_misses << '\n'
                 << "HashKV profile lock wait ms: " << stats.lock_wait_ns / 1e6
+                << '\n'
+                << "HashKV profile WAL sync calls: " << stats.wal_sync_calls
+                << '\n'
+                << "HashKV profile WAL sync ms: " << stats.wal_sync_ns / 1e6
                 << std::endl;
 #endif
     }
@@ -154,8 +168,8 @@ class HashKVDB : public DB {
 
   Status Update(const std::string &table, const std::string &key,
                 std::vector<Field> &values) override {
-    std::lock_guard<std::mutex> lock(update_mutex_);
     const std::string storage_key = Key(table, key);
+    std::lock_guard<std::mutex> lock(UpdateMutex(storage_key));
     std::string row;
     std::string error;
     hashkv::Status status = store_->Get(storage_key, &row, &error);
@@ -184,19 +198,26 @@ class HashKVDB : public DB {
 
   Status Insert(const std::string &table, const std::string &key,
                 std::vector<Field> &values) override {
-    std::lock_guard<std::mutex> lock(update_mutex_);
+    const std::string storage_key = Key(table, key);
+    std::lock_guard<std::mutex> lock(UpdateMutex(storage_key));
     std::string error;
-    return Translate(store_->Put(Key(table, key), Encode(values), &error),
+    return Translate(store_->Put(storage_key, Encode(values), &error),
                      error);
   }
 
   Status Delete(const std::string &table, const std::string &key) override {
-    std::lock_guard<std::mutex> lock(update_mutex_);
+    const std::string storage_key = Key(table, key);
+    std::lock_guard<std::mutex> lock(UpdateMutex(storage_key));
     std::string error;
-    return Translate(store_->Erase(Key(table, key), &error), error);
+    return Translate(store_->Erase(storage_key, &error), error);
   }
 
  private:
+  static std::mutex &UpdateMutex(const std::string &key) {
+    return update_mutexes_[std::hash<std::string> {}(key) %
+                           update_mutexes_.size()];
+  }
+
   static std::string Key(const std::string &table, const std::string &key) {
     return table + '\0' + key;
   }
@@ -282,7 +303,7 @@ class HashKVDB : public DB {
   }
 
   static std::mutex open_mutex_;
-  static std::mutex update_mutex_;
+  static std::array<std::mutex, 256> update_mutexes_;
   static std::weak_ptr<hashkv::Store> shared_store_;
 
   std::shared_ptr<hashkv::Store> store_;
@@ -290,7 +311,7 @@ class HashKVDB : public DB {
 };
 
 std::mutex HashKVDB::open_mutex_;
-std::mutex HashKVDB::update_mutex_;
+std::array<std::mutex, 256> HashKVDB::update_mutexes_;
 std::weak_ptr<hashkv::Store> HashKVDB::shared_store_;
 
 DB *NewHashKVDB() { return new HashKVDB; }

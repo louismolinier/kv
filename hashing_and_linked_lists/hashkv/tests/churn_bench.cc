@@ -74,4 +74,5 @@ int main(int argc, char **argv) {
             << " file_bytes=" << stats.file_bytes << std::endl;
   store.reset();
   ::unlink(path);
+  ::unlink((std::string(path) + ".wal").c_str());
 }

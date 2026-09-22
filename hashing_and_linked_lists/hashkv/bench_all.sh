@@ -7,6 +7,7 @@ RECORDS="${1:-100000}"
 OPERATIONS="${2:-100000}"
 THREADS="${3:-4}"
 DB_PATH="${HASHKV_PATH:-/tmp/hashkv-all-workloads-${UID}.data}"
+SCAN_CACHE_SLOTS="${HASHKV_SCAN_CACHE_SLOTS:-0}"
 
 make -C "$ROOT" YCSB_DIR="$YCSB_DIR" build/ycsb_hashkv >/dev/null
 
@@ -23,6 +24,7 @@ for workload in a b c d e f; do
     -p "recordcount=$RECORDS" \
     -p "operationcount=$OPERATIONS" \
     -p "hashkv.path=$DB_PATH" \
+    -p "hashkv.scan_cache_slots=$SCAN_CACHE_SLOTS" \
     -p hashkv.destroy=true \
     -p hashkv.stats=false)
   load_rate=$(printf '%s\n' "$output" | awk '/^Load throughput\(ops\/sec\):/ {print $3}')
@@ -32,4 +34,4 @@ for workload in a b c d e f; do
     "$workload" "$load_rate" "$run_rate" "$run_seconds"
 done
 
-printf 'Data file retained at: %s\n' "$DB_PATH"
+printf 'Data files retained at: %s and %s.wal\n' "$DB_PATH" "$DB_PATH"
